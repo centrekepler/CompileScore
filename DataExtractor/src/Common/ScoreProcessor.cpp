@@ -354,9 +354,15 @@ namespace CompileScore
 
 		U32 numInsertions = 0u;
 		U32 insertionPoint = 0u;
+		U64 minimumDuration = 0xffffffffffffffff;
 		for (CompileUnit& unit : scoreData.units)
 		{
 			const U64 thisUnitTime = unit.context.startTime[0];
+			const U64 thisUnitDuration = unit.values[ToUnderlying(CompileCategory::ExecuteCompiler)];
+			if (thisUnitDuration < minimumDuration)
+			{
+				minimumDuration = thisUnitDuration;
+			}
 			while (insertionPoint > 0 && units[insertionPoint - 1]->context.startTime[0] > thisUnitTime)
 			{
 				units[insertionPoint] = units[insertionPoint - 1];
@@ -371,42 +377,89 @@ namespace CompileScore
 		threads.emplace_back(0u);
 		U32 lowestThreadIndex = 0u;
 		U32 numThreads = 1u;
-
-		for (CompileUnit* unit : units)
+		fastl::vector<U64> unitsToRemove;
+		U64 numUnitsToRemove = 0u;
+		U64 epsilon = minimumDuration == 0u ? 1u : minimumDuration - 1;
+		
+		while (units.size() > 0)
 		{
-			//Check if we need to use a new thread
-			const U64 startTime = unit->context.startTime[0]; 
-			const U64 lowestThreadTime = threads[lowestThreadIndex];
-			if ( lowestThreadTime > startTime)
+			for (U64 i=0u; i < units.size(); i++)
 			{
-				//assign unit to new thread - update/keep lowest thread
-				unit->context.threadId[0] = numThreads;
-				unit->context.threadId[1] = numThreads;
-
+				const CompileUnit* unit = units[i];
+				const U64 startTime = unit->context.startTime[0];
 				const U64 endTime = startTime + unit->values[ToUnderlying(CompileCategory::ExecuteCompiler)];
-				threads.emplace_back(endTime);
-				lowestThreadIndex = lowestThreadTime > endTime ? numThreads : lowestThreadIndex;
-				++numThreads;
-			}
-			else
-			{
-				//assign unit to lowest thread
-				threads[lowestThreadIndex] = startTime + unit->values[ToUnderlying(CompileCategory::ExecuteCompiler)];
-				unit->context.threadId[0] = lowestThreadIndex;
-				unit->context.threadId[1] = lowestThreadIndex;
-
-				//find the next lowest thread
-				U64 lowestTime = 0xffffffffffffffff;
-				for (U32 i = 0u; i < numThreads; ++i)
+				numUnitsToRemove = 0u;
+				for (U64 t = 0u; t < numThreads; ++t)
 				{
-					if (threads[i] < lowestTime)
+					if (threads[t] <= startTime && threads[t] + epsilon > startTime)
 					{
-						lowestTime = threads[i];
-						lowestThreadIndex = i;
+						threads[t] = endTime;
+						unitsToRemove.emplace_back(i);
+						++numUnitsToRemove;
 					}
 				}
 			}
+			if (numUnitsToRemove == 0)
+			{
+				threads.emplace_back(0);
+				++numThreads;
+			}
+
+			fastl::vector<CompileUnit*> newUnits;
+			newUnits.resize(units.size());
+			U64 j = 0u;
+			for (U64 i = 0u; i < units.size(); ++i)
+			{
+				if (i != unitsToRemove[j])
+				{
+					newUnits.emplace_back(units[i]);
+				}
+				else
+				{
+					++j;
+					if (j >= numUnitsToRemove)
+					{
+						break;
+					}
+				}
+			}
+			units = newUnits;
 		}
+
+
+		//for (CompileUnit* unit : units)
+		//{
+		//	//Check if we need to use a new thread
+		//	const U64 startTime = unit->context.startTime[0]; 
+		//	const U64 lowestThreadTime = threads[lowestThreadIndex];
+		//	if ( lowestThreadTime > startTime)
+		//	{
+		//		//assign unit to new thread - update/keep lowest thread
+		//		unit->context.threadId[0] = numThreads;
+		//		unit->context.threadId[1] = numThreads;
+		//		const U64 endTime = startTime + unit->values[ToUnderlying(CompileCategory::ExecuteCompiler)];
+		//		threads.emplace_back(endTime);
+		//		lowestThreadIndex = lowestThreadTime > endTime ? numThreads : lowestThreadIndex;
+		//		++numThreads;
+		//	}
+		//	else
+		//	{
+		//		//assign unit to lowest thread
+		//		threads[lowestThreadIndex] = startTime + unit->values[ToUnderlying(CompileCategory::ExecuteCompiler)];
+		//		unit->context.threadId[0] = lowestThreadIndex;
+		//		unit->context.threadId[1] = lowestThreadIndex;
+		//		//find the next lowest thread
+		//		U64 lowestTime = 0xffffffffffffffff;
+		//		for (U32 i = 0u; i < numThreads; ++i)
+		//		{
+		//			if (threads[i] < lowestTime)
+		//			{
+		//				lowestTime = threads[i];
+		//				lowestThreadIndex = i;
+		//			}
+		//		}
+		//	}
+		//}
 
 		scoreData.session.numThreads = numThreads;
 	}
